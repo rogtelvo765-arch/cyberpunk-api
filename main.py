@@ -133,9 +133,17 @@ class CampaignUpdateResponse(BaseModel):
 # Health check
 # -----------------------------
 
-@app.get("/")
-def root() -> dict[str, str]:
-    return {"status": "ok", "service": "Night City Referee Actions API"}
+class RootResponse(BaseModel):
+    status: str
+    service: str
+
+
+@app.get("/", response_model=RootResponse)
+def root() -> RootResponse:
+    return RootResponse(
+        status="ok",
+        service="Night City Referee Actions API"
+    )
 
 
 # -----------------------------
