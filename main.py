@@ -94,12 +94,16 @@ class CharacterState(BaseModel):
     hp: int | None = None
     max_hp: int | None = None
     wounds: str | None = None
-    ammo: dict[str, int] | None = None
     eddies: int | None = None
     humanity: int | None = None
     reputation: int | None = None
     inventory_notes: str | None = None
     status_notes: str | None = None
+
+    weapons: list[str] | None = None
+    ammo: dict[str, int] | None = None
+    cyberware: list[str] | None = None
+    loot: list[str] | None = None
 
 
 class CharacterUpdateResponse(BaseModel):
