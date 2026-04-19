@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 app = FastAPI(
     title="Night City Referee Actions API",
     version="1.0.0",
-    description="Dice rolling, character tracking, and campaign state management for a Cyberpunk 2020 GPT.",
+    description="Dice rolling, character tracking, campaign state, and inventory for a Cyberpunk 2020 GPT.",
     servers=[
         {"url": "https://cyberpunk-api-4vse.onrender.com"}
     ],
@@ -58,6 +58,7 @@ def parse_dice_formula(formula: str) -> tuple[int, int, int]:
     match = DICE_PATTERN.match(formula)
     if not match:
         raise ValueError("Invalid dice formula. Use formats like 1d10, 2d6+3, 3d6-1.")
+
     num_dice = int(match.group(1))
     die_size = int(match.group(2))
     modifier = int(match.group(3) or 0)
@@ -106,32 +107,6 @@ class CharacterState(BaseModel):
     loot: list[str] | None = None
 
 
-@app.post("/character/inventory")
-def update_inventory(payload: InventoryUpdateRequest):
-    try:
-        char_id = safe_id(payload.character_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
-    path = CHARACTER_DIR / f"{char_id}.json"
-    existing = load_json(path)
-
-    if not existing:
-        raise HTTPException(status_code=404, detail="Character not found.")
-
-    if payload.weapons is not None:
-        existing["weapons"] = payload.weapons
-    if payload.ammo is not None:
-        existing["ammo"] = payload.ammo
-    if payload.cyberware is not None:
-        existing["cyberware"] = payload.cyberware
-    if payload.loot is not None:
-        existing["loot"] = payload.loot
-
-    save_json(path, existing)
-    return {"success": True, "character_id": char_id, "message": "Inventory updated."}
-
-
 class CharacterUpdateResponse(BaseModel):
     success: bool
     character_id: str
@@ -151,6 +126,20 @@ class CampaignState(BaseModel):
 class CampaignUpdateResponse(BaseModel):
     success: bool
     campaign_id: str
+    message: str
+
+
+class InventoryUpdateRequest(BaseModel):
+    character_id: str
+    weapons: list[str] | None = None
+    ammo: dict[str, int] | None = None
+    cyberware: list[str] | None = None
+    loot: list[str] | None = None
+
+
+class InventoryUpdateResponse(BaseModel):
+    success: bool
+    character_id: str
     message: str
 
 
@@ -217,6 +206,37 @@ def update_character_state(payload: CharacterState) -> CharacterUpdateResponse:
         success=True,
         character_id=char_id,
         message="Character state updated.",
+    )
+
+
+@app.post("/character/inventory", response_model=InventoryUpdateResponse)
+def update_inventory(payload: InventoryUpdateRequest) -> InventoryUpdateResponse:
+    try:
+        char_id = safe_id(payload.character_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    path = CHARACTER_DIR / f"{char_id}.json"
+    existing = load_json(path)
+
+    if not existing:
+        raise HTTPException(status_code=404, detail="Character not found.")
+
+    if payload.weapons is not None:
+        existing["weapons"] = payload.weapons
+    if payload.ammo is not None:
+        existing["ammo"] = payload.ammo
+    if payload.cyberware is not None:
+        existing["cyberware"] = payload.cyberware
+    if payload.loot is not None:
+        existing["loot"] = payload.loot
+
+    save_json(path, existing)
+
+    return InventoryUpdateResponse(
+        success=True,
+        character_id=char_id,
+        message="Inventory updated.",
     )
 
 
