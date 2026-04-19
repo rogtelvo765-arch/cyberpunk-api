@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import random
 import re
 from pathlib import Path
@@ -16,7 +15,7 @@ app = FastAPI(
     description="Dice rolling, character tracking, and campaign state management for a Cyberpunk 2020 GPT.",
     servers=[
         {"url": "https://cyberpunk-api-4vse.onrender.com"}
-    ]
+    ],
 )
 
 DATA_DIR = Path("data")
@@ -25,11 +24,6 @@ CAMPAIGN_DIR = DATA_DIR / "campaigns"
 
 CHARACTER_DIR.mkdir(parents=True, exist_ok=True)
 CAMPAIGN_DIR.mkdir(parents=True, exist_ok=True)
-
-
-# -----------------------------
-# Helpers
-# -----------------------------
 
 DICE_PATTERN = re.compile(r"^\s*(\d+)d(\d+)([+-]\d+)?\s*$")
 
@@ -76,9 +70,10 @@ def parse_dice_formula(formula: str) -> tuple[int, int, int]:
     return num_dice, die_size, modifier
 
 
-# -----------------------------
-# Models
-# -----------------------------
+class RootResponse(BaseModel):
+    status: str
+    service: str
+
 
 class RollRequest(BaseModel):
     formula: str = Field(..., examples=["1d10", "2d6+3"])
@@ -129,26 +124,13 @@ class CampaignUpdateResponse(BaseModel):
     message: str
 
 
-# -----------------------------
-# Health check
-# -----------------------------
-
-class RootResponse(BaseModel):
-    status: str
-    service: str
-
-
 @app.get("/", response_model=RootResponse)
 def root() -> RootResponse:
     return RootResponse(
         status="ok",
-        service="Night City Referee Actions API"
+        service="Night City Referee Actions API",
     )
 
-
-# -----------------------------
-# Dice
-# -----------------------------
 
 @app.post("/roll", response_model=RollResponse)
 def roll_dice(payload: RollRequest) -> RollResponse:
@@ -168,10 +150,6 @@ def roll_dice(payload: RollRequest) -> RollResponse:
         reason=payload.reason,
     )
 
-
-# -----------------------------
-# Character state
-# -----------------------------
 
 @app.get("/character/get", response_model=CharacterState)
 def get_character_state(character_id: str) -> CharacterState:
@@ -211,10 +189,6 @@ def update_character_state(payload: CharacterState) -> CharacterUpdateResponse:
         message="Character state updated.",
     )
 
-
-# -----------------------------
-# Campaign state
-# -----------------------------
 
 @app.get("/campaign/load", response_model=CampaignState)
 def load_campaign_state(campaign_id: str) -> CampaignState:
