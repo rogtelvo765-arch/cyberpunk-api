@@ -106,6 +106,32 @@ class CharacterState(BaseModel):
     loot: list[str] | None = None
 
 
+@app.post("/character/inventory")
+def update_inventory(payload: InventoryUpdateRequest):
+    try:
+        char_id = safe_id(payload.character_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    path = CHARACTER_DIR / f"{char_id}.json"
+    existing = load_json(path)
+
+    if not existing:
+        raise HTTPException(status_code=404, detail="Character not found.")
+
+    if payload.weapons is not None:
+        existing["weapons"] = payload.weapons
+    if payload.ammo is not None:
+        existing["ammo"] = payload.ammo
+    if payload.cyberware is not None:
+        existing["cyberware"] = payload.cyberware
+    if payload.loot is not None:
+        existing["loot"] = payload.loot
+
+    save_json(path, existing)
+    return {"success": True, "character_id": char_id, "message": "Inventory updated."}
+
+
 class CharacterUpdateResponse(BaseModel):
     success: bool
     character_id: str
