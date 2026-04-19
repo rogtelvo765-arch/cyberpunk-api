@@ -1,7 +1,12 @@
 from fastapi import FastAPI
 import random
 
-app = FastAPI()
+app = FastAPI(
+    title="Cyberpunk API",
+    servers=[
+        {"url": "https://cyberpunk-api-4vse.onrender.com"}
+    ]
+)
 
 # Simple dice roller
 @app.post("/roll")
