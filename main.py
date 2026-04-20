@@ -189,9 +189,13 @@ def inventory(payload: InventoryAction):
         weapons = [w for w in weapons if w not in payload.remove_weapons]
 
     # Ammo
-    if payload.add_ammo:
+      if payload.add_ammo:
         for w, amt in payload.add_ammo.items():
             ammo[w] = ammo.get(w, 0) + amt
+
+    if payload.remove_ammo:
+        for w, amt in payload.remove_ammo.items():
+            ammo[w] = max(0, ammo.get(w, 0) - amt)
 
     if payload.set_ammo:
         for w, amt in payload.set_ammo.items():
