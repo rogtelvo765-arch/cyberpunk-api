@@ -107,6 +107,7 @@ class InventoryAction(BaseModel):
     remove_weapons: list[str] | None = None
 
     add_ammo: dict[str, int] | None = None
+    remove_ammo: dict[str, int] | None = None
     set_ammo: dict[str, int] | None = None
 
     add_cyberware: list[str] | None = None
