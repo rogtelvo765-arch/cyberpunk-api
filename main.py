@@ -7,15 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 app = FastAPI(
-    title="Night City Referee Actions API",
-    version="2.0.0",
-    description="Cyberpunk 2020 backend with dice, character, campaign, and smart inventory.",
-    servers=[
-        {"url": "https://cyberpunk-api-4vse.onrender.com"}
-    ],
+    title="Night City Referee API",
+    version="3.0.0",
+    servers=[{"url": "https://cyberpunk-api-4vse.onrender.com"}],
 )
 
 DATA_DIR = Path("data")
@@ -29,57 +26,45 @@ CAMPAIGN_DIR.mkdir(parents=True, exist_ok=True)
 # Helpers
 # -----------------------------
 
-DICE_PATTERN = re.compile(r"^\s*(\d+)d(\d+)([+-]\d+)?\s*$")
-
-
 def safe_id(value: str) -> str:
-    cleaned = re.sub(r"[^a-zA-Z0-9_\-]", "_", value.strip())
-    if not cleaned:
-        raise ValueError("Identifier cannot be empty.")
-    return cleaned
+    return re.sub(r"[^a-zA-Z0-9_\-]", "_", value.strip())
 
 
 def load_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
-    with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
+    return json.loads(path.read_text())
 
 
-def save_json(path: Path, payload: dict[str, Any]) -> None:
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2, ensure_ascii=False)
+def save_json(path: Path, data: dict[str, Any]):
+    path.write_text(json.dumps(data, indent=2))
 
 
-def parse_dice_formula(formula: str):
-    match = DICE_PATTERN.match(formula)
+def roll_dice_formula(formula: str):
+    match = re.match(r"(\d+)d(\d+)([+-]\d+)?", formula)
     if not match:
-        raise ValueError("Invalid dice formula.")
+        raise ValueError("Invalid dice")
 
-    num_dice = int(match.group(1))
-    die_size = int(match.group(2))
-    modifier = int(match.group(3) or 0)
+    num = int(match.group(1))
+    size = int(match.group(2))
+    mod = int(match.group(3) or 0)
 
-    return num_dice, die_size, modifier
+    rolls = [random.randint(1, size) for _ in range(num)]
+    return rolls, sum(rolls) + mod
 
 
 # -----------------------------
 # Models
 # -----------------------------
 
-class RootResponse(BaseModel):
-    status: str
-    service: str
-
-
 class RollRequest(BaseModel):
     formula: str
-    reason: str | None = None
 
 
 class RollResponse(BaseModel):
     total: int
     rolls: list[int]
+
 
 class WeaponStatBlock(BaseModel):
     name: str
@@ -105,21 +90,6 @@ class CharacterState(BaseModel):
 
     weapon_stats: list[WeaponStatBlock] | None = None
 
-    
-class WeaponStatsUpdateRequest(BaseModel):
-character_id: str
-weapon: WeaponStatBlock
-
-
-class WeaponStatsResponse(BaseModel):
-    success: bool
-    message: str
-
-
-class SimpleResponse(BaseModel):
-    success: bool
-    message: str
-
 
 class InventoryAction(BaseModel):
     character_id: str
@@ -138,71 +108,55 @@ class InventoryAction(BaseModel):
     remove_loot: list[str] | None = None
 
 
-class CampaignState(BaseModel):
-    campaign_id: str
-    world_notes: str | None = None
+class WeaponStatsUpdateRequest(BaseModel):
+    character_id: str
+    weapon: WeaponStatBlock
 
 
 # -----------------------------
 # Routes
 # -----------------------------
 
-@app.get("/", response_model=RootResponse)
-def root():
-    return RootResponse(status="ok", service="Cyberpunk API")
-
-
-# 🎲 Dice
 @app.post("/roll", response_model=RollResponse)
 def roll(payload: RollRequest):
-    num, size, mod = parse_dice_formula(payload.formula)
-    rolls = [random.randint(1, size) for _ in range(num)]
-    return RollResponse(total=sum(rolls) + mod, rolls=rolls)
+    rolls, total = roll_dice_formula(payload.formula)
+    return RollResponse(total=total, rolls=rolls)
 
 
-# 🧍 Character
-@app.post("/character/update", response_model=SimpleResponse)
+@app.post("/character/update")
 def update_character(payload: CharacterState):
-    char_id = safe_id(payload.character_id)
-    path = CHARACTER_DIR / f"{char_id}.json"
-
+    path = CHARACTER_DIR / f"{safe_id(payload.character_id)}.json"
     data = load_json(path)
-    new_data = payload.model_dump()
 
-    data.update({k: v for k, v in new_data.items() if v is not None})
+    data.update({k: v for k, v in payload.model_dump().items() if v is not None})
 
     save_json(path, data)
-
-    return SimpleResponse(success=True, message="Character updated")
+    return {"success": True}
 
 
 @app.get("/character/get")
 def get_character(character_id: str):
     path = CHARACTER_DIR / f"{safe_id(character_id)}.json"
     data = load_json(path)
+    if not data:
+        raise HTTPException(404, "Character not found")
+    return data
+
+
+# 🔥 SMART INVENTORY
+@app.post("/character/inventory")
+def inventory(payload: InventoryAction):
+    path = CHARACTER_DIR / f"{safe_id(payload.character_id)}.json"
+    data = load_json(path)
 
     if not data:
         raise HTTPException(404, "Character not found")
 
-    return data
+    weapons = data.get("weapons") or []
+    ammo = data.get("ammo") or {}
+    cyberware = data.get("cyberware") or []
+    loot = data.get("loot") or []
 
-
-# 🎒 Smart Inventory
-@app.post("/character/inventory", response_model=SimpleResponse)
-def inventory(payload: InventoryAction):
-    char_id = safe_id(payload.character_id)
-    path = CHARACTER_DIR / f"{char_id}.json"
-
-    data = load_json(path)
-    if not data:
-        raise HTTPException(status_code=404, detail="Character not found")
-
-    weapons = list(data.get("weapons") or [])
-    ammo = dict(data.get("ammo") or {})
-    cyberware = list(data.get("cyberware") or [])
-    loot = list(data.get("loot") or [])
-
-    # Weapons
     if payload.add_weapons:
         for w in payload.add_weapons:
             if w not in weapons:
@@ -211,21 +165,18 @@ def inventory(payload: InventoryAction):
     if payload.remove_weapons:
         weapons = [w for w in weapons if w not in payload.remove_weapons]
 
-    # Ammo
     if payload.add_ammo:
         for w, amt in payload.add_ammo.items():
-            ammo[w] = int(ammo.get(w, 0)) + int(amt)
+            ammo[w] = ammo.get(w, 0) + amt
 
     if payload.remove_ammo:
         for w, amt in payload.remove_ammo.items():
-            current = int(ammo.get(w, 0))
-            ammo[w] = max(0, current - int(amt))
+            ammo[w] = max(0, ammo.get(w, 0) - amt)
 
     if payload.set_ammo:
         for w, amt in payload.set_ammo.items():
-            ammo[w] = max(0, int(amt))
+            ammo[w] = amt
 
-    # Cyberware
     if payload.add_cyberware:
         for c in payload.add_cyberware:
             if c not in cyberware:
@@ -234,7 +185,6 @@ def inventory(payload: InventoryAction):
     if payload.remove_cyberware:
         cyberware = [c for c in cyberware if c not in payload.remove_cyberware]
 
-    # Loot
     if payload.add_loot:
         for l in payload.add_loot:
             if l not in loot:
@@ -250,46 +200,31 @@ def inventory(payload: InventoryAction):
 
     save_json(path, data)
 
-    return SimpleResponse(success=True, message="Inventory updated")
+    return {"success": True}
 
-@app.post("/character/weapon_stats", response_model=WeaponStatsResponse)
+
+# 🔥 WEAPON STATS SYSTEM
+@app.post("/character/weapon_stats")
 def update_weapon_stats(payload: WeaponStatsUpdateRequest):
-    char_id = safe_id(payload.character_id)
-    path = CHARACTER_DIR / f"{char_id}.json"
-
+    path = CHARACTER_DIR / f"{safe_id(payload.character_id)}.json"
     data = load_json(path)
-    if not data:
-        raise HTTPException(status_code=404, detail="Character not found")
 
-    weapon_stats = data.get("weapon_stats") or []
+    if not data:
+        raise HTTPException(404, "Character not found")
+
+    stats = data.get("weapon_stats") or []
 
     updated = False
-    for i, existing in enumerate(weapon_stats):
-        if existing.get("name") == payload.weapon.name:
-            weapon_stats[i] = payload.weapon.model_dump()
+    for i, w in enumerate(stats):
+        if w.get("name") == payload.weapon.name:
+            stats[i] = payload.weapon.model_dump()
             updated = True
             break
 
     if not updated:
-        weapon_stats.append(payload.weapon.model_dump())
+        stats.append(payload.weapon.model_dump())
 
-    data["weapon_stats"] = weapon_stats
+    data["weapon_stats"] = stats
     save_json(path, data)
 
-    return WeaponStatsResponse(
-        success=True,
-        message="Weapon stats updated"
-    )
-
-# 🌆 Campaign
-@app.post("/campaign/save", response_model=SimpleResponse)
-def save_campaign(payload: CampaignState):
-    path = CAMPAIGN_DIR / f"{safe_id(payload.campaign_id)}.json"
-    save_json(path, payload.model_dump())
-    return SimpleResponse(success=True, message="Saved")
-
-
-@app.get("/campaign/load")
-def load_campaign(campaign_id: str):
-    path = CAMPAIGN_DIR / f"{safe_id(campaign_id)}.json"
-    return load_json(path)
+    return {"success": True}
