@@ -81,6 +81,15 @@ class RollResponse(BaseModel):
     total: int
     rolls: list[int]
 
+class WeaponStatBlock(BaseModel):
+    name: str
+    damage: str | None = None
+    accuracy: int | None = None
+    reliability: str | None = None
+    manufacturer: str | None = None
+    rarity: str | None = None
+    notes: str | None = None
+
 
 class CharacterState(BaseModel):
     character_id: str
@@ -93,6 +102,18 @@ class CharacterState(BaseModel):
     ammo: dict[str, int] | None = None
     cyberware: list[str] | None = None
     loot: list[str] | None = None
+
+    weapon_stats: list[WeaponStatBlock] | None = None
+
+    
+class WeaponStatsUpdateRequest(BaseModel):
+character_id: str
+weapon: WeaponStatBlock
+
+
+class WeaponStatsResponse(BaseModel):
+    success: bool
+    message: str
 
 
 class SimpleResponse(BaseModel):
@@ -230,6 +251,35 @@ def inventory(payload: InventoryAction):
     save_json(path, data)
 
     return SimpleResponse(success=True, message="Inventory updated")
+
+@app.post("/character/weapon_stats", response_model=WeaponStatsResponse)
+def update_weapon_stats(payload: WeaponStatsUpdateRequest):
+    char_id = safe_id(payload.character_id)
+    path = CHARACTER_DIR / f"{char_id}.json"
+
+    data = load_json(path)
+    if not data:
+        raise HTTPException(status_code=404, detail="Character not found")
+
+    weapon_stats = data.get("weapon_stats") or []
+
+    updated = False
+    for i, existing in enumerate(weapon_stats):
+        if existing.get("name") == payload.weapon.name:
+            weapon_stats[i] = payload.weapon.model_dump()
+            updated = True
+            break
+
+    if not updated:
+        weapon_stats.append(payload.weapon.model_dump())
+
+    data["weapon_stats"] = weapon_stats
+    save_json(path, data)
+
+    return WeaponStatsResponse(
+        success=True,
+        message="Weapon stats updated"
+    )
 
 # 🌆 Campaign
 @app.post("/campaign/save", response_model=SimpleResponse)
