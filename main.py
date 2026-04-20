@@ -11,8 +11,8 @@ from pydantic import BaseModel, Field
 
 app = FastAPI(
     title="Night City Referee Actions API",
-    version="1.0.0",
-    description="Dice rolling, character tracking, campaign state, and inventory for a Cyberpunk 2020 GPT.",
+    version="2.0.0",
+    description="Cyberpunk 2020 backend with dice, character, campaign, and smart inventory.",
     servers=[
         {"url": "https://cyberpunk-api-4vse.onrender.com"}
     ],
@@ -24,6 +24,10 @@ CAMPAIGN_DIR = DATA_DIR / "campaigns"
 
 CHARACTER_DIR.mkdir(parents=True, exist_ok=True)
 CAMPAIGN_DIR.mkdir(parents=True, exist_ok=True)
+
+# -----------------------------
+# Helpers
+# -----------------------------
 
 DICE_PATTERN = re.compile(r"^\s*(\d+)d(\d+)([+-]\d+)?\s*$")
 
@@ -47,29 +51,21 @@ def save_json(path: Path, payload: dict[str, Any]) -> None:
         json.dump(payload, f, indent=2, ensure_ascii=False)
 
 
-def merge_patch(existing: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
-    for key, value in updates.items():
-        if value is not None:
-            existing[key] = value
-    return existing
-
-
-def parse_dice_formula(formula: str) -> tuple[int, int, int]:
+def parse_dice_formula(formula: str):
     match = DICE_PATTERN.match(formula)
     if not match:
-        raise ValueError("Invalid dice formula. Use formats like 1d10, 2d6+3, 3d6-1.")
+        raise ValueError("Invalid dice formula.")
 
     num_dice = int(match.group(1))
     die_size = int(match.group(2))
     modifier = int(match.group(3) or 0)
 
-    if num_dice < 1 or num_dice > 100:
-        raise ValueError("Number of dice must be between 1 and 100.")
-    if die_size < 2 or die_size > 1000:
-        raise ValueError("Die size must be between 2 and 1000.")
-
     return num_dice, die_size, modifier
 
+
+# -----------------------------
+# Models
+# -----------------------------
 
 class RootResponse(BaseModel):
     status: str
@@ -77,16 +73,13 @@ class RootResponse(BaseModel):
 
 
 class RollRequest(BaseModel):
-    formula: str = Field(..., examples=["1d10", "2d6+3"])
+    formula: str
     reason: str | None = None
 
 
 class RollResponse(BaseModel):
-    formula: str
-    rolls: list[int]
-    modifier: int
     total: int
-    reason: str | None = None
+    rolls: list[int]
 
 
 class CharacterState(BaseModel):
@@ -94,12 +87,7 @@ class CharacterState(BaseModel):
     name: str | None = None
     hp: int | None = None
     max_hp: int | None = None
-    wounds: str | None = None
     eddies: int | None = None
-    humanity: int | None = None
-    reputation: int | None = None
-    inventory_notes: str | None = None
-    status_notes: str | None = None
 
     weapons: list[str] | None = None
     ammo: dict[str, int] | None = None
@@ -107,173 +95,140 @@ class CharacterState(BaseModel):
     loot: list[str] | None = None
 
 
-class CharacterUpdateResponse(BaseModel):
+class SimpleResponse(BaseModel):
     success: bool
-    character_id: str
     message: str
+
+
+class InventoryAction(BaseModel):
+    character_id: str
+
+    add_weapons: list[str] | None = None
+    remove_weapons: list[str] | None = None
+
+    add_ammo: dict[str, int] | None = None
+    set_ammo: dict[str, int] | None = None
+
+    add_cyberware: list[str] | None = None
+    remove_cyberware: list[str] | None = None
+
+    add_loot: list[str] | None = None
+    remove_loot: list[str] | None = None
 
 
 class CampaignState(BaseModel):
     campaign_id: str
-    session_id: str | None = None
-    district: str | None = None
     world_notes: str | None = None
-    faction_status: str | None = None
-    npc_notes: str | None = None
-    heat: int | None = None
 
 
-class CampaignUpdateResponse(BaseModel):
-    success: bool
-    campaign_id: str
-    message: str
-
-
-class InventoryUpdateRequest(BaseModel):
-    character_id: str
-    weapons: list[str] | None = None
-    ammo: dict[str, int] | None = None
-    cyberware: list[str] | None = None
-    loot: list[str] | None = None
-
-
-class InventoryUpdateResponse(BaseModel):
-    success: bool
-    character_id: str
-    message: str
-
+# -----------------------------
+# Routes
+# -----------------------------
 
 @app.get("/", response_model=RootResponse)
-def root() -> RootResponse:
-    return RootResponse(
-        status="ok",
-        service="Night City Referee Actions API",
-    )
+def root():
+    return RootResponse(status="ok", service="Cyberpunk API")
 
 
+# 🎲 Dice
 @app.post("/roll", response_model=RollResponse)
-def roll_dice(payload: RollRequest) -> RollResponse:
-    try:
-        num_dice, die_size, modifier = parse_dice_formula(payload.formula)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
-    rolls = [random.randint(1, die_size) for _ in range(num_dice)]
-    total = sum(rolls) + modifier
-
-    return RollResponse(
-        formula=payload.formula,
-        rolls=rolls,
-        modifier=modifier,
-        total=total,
-        reason=payload.reason,
-    )
+def roll(payload: RollRequest):
+    num, size, mod = parse_dice_formula(payload.formula)
+    rolls = [random.randint(1, size) for _ in range(num)]
+    return RollResponse(total=sum(rolls) + mod, rolls=rolls)
 
 
-@app.get("/character/get", response_model=CharacterState)
-def get_character_state(character_id: str) -> CharacterState:
-    try:
-        char_id = safe_id(character_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
+# 🧍 Character
+@app.post("/character/update", response_model=SimpleResponse)
+def update_character(payload: CharacterState):
+    char_id = safe_id(payload.character_id)
     path = CHARACTER_DIR / f"{char_id}.json"
+
+    data = load_json(path)
+    new_data = payload.model_dump()
+
+    data.update({k: v for k, v in new_data.items() if v is not None})
+
+    save_json(path, data)
+
+    return SimpleResponse(success=True, message="Character updated")
+
+
+@app.get("/character/get")
+def get_character(character_id: str):
+    path = CHARACTER_DIR / f"{safe_id(character_id)}.json"
     data = load_json(path)
 
     if not data:
-        raise HTTPException(status_code=404, detail="Character not found.")
+        raise HTTPException(404, "Character not found")
 
-    return CharacterState(**data)
+    return data
 
 
-@app.post("/character/update", response_model=CharacterUpdateResponse)
-def update_character_state(payload: CharacterState) -> CharacterUpdateResponse:
-    try:
-        char_id = safe_id(payload.character_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
+# 🎒 Smart Inventory
+@app.post("/character/inventory", response_model=SimpleResponse)
+def inventory(payload: InventoryAction):
+    char_id = safe_id(payload.character_id)
     path = CHARACTER_DIR / f"{char_id}.json"
-    existing = load_json(path)
 
-    updates = payload.model_dump()
-    updates["character_id"] = char_id
-
-    merged = merge_patch(existing, updates)
-    save_json(path, merged)
-
-    return CharacterUpdateResponse(
-        success=True,
-        character_id=char_id,
-        message="Character state updated.",
-    )
-
-
-@app.post("/character/inventory", response_model=InventoryUpdateResponse)
-def update_inventory(payload: InventoryUpdateRequest) -> InventoryUpdateResponse:
-    try:
-        char_id = safe_id(payload.character_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
-    path = CHARACTER_DIR / f"{char_id}.json"
-    existing = load_json(path)
-
-    if not existing:
-        raise HTTPException(status_code=404, detail="Character not found.")
-
-    if payload.weapons is not None:
-        existing["weapons"] = payload.weapons
-    if payload.ammo is not None:
-        existing["ammo"] = payload.ammo
-    if payload.cyberware is not None:
-        existing["cyberware"] = payload.cyberware
-    if payload.loot is not None:
-        existing["loot"] = payload.loot
-
-    save_json(path, existing)
-
-    return InventoryUpdateResponse(
-        success=True,
-        character_id=char_id,
-        message="Inventory updated.",
-    )
-
-
-@app.get("/campaign/load", response_model=CampaignState)
-def load_campaign_state(campaign_id: str) -> CampaignState:
-    try:
-        camp_id = safe_id(campaign_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
-    path = CAMPAIGN_DIR / f"{camp_id}.json"
     data = load_json(path)
-
     if not data:
-        raise HTTPException(status_code=404, detail="Campaign not found.")
+        raise HTTPException(404, "Character not found")
 
-    return CampaignState(**data)
+    weapons = data.get("weapons") or []
+    ammo = data.get("ammo") or {}
+    cyberware = data.get("cyberware") or []
+    loot = data.get("loot") or []
+
+    # Weapons
+    if payload.add_weapons:
+        weapons += [w for w in payload.add_weapons if w not in weapons]
+
+    if payload.remove_weapons:
+        weapons = [w for w in weapons if w not in payload.remove_weapons]
+
+    # Ammo
+    if payload.add_ammo:
+        for w, amt in payload.add_ammo.items():
+            ammo[w] = ammo.get(w, 0) + amt
+
+    if payload.set_ammo:
+        for w, amt in payload.set_ammo.items():
+            ammo[w] = amt
+
+    # Cyberware
+    if payload.add_cyberware:
+        cyberware += [c for c in payload.add_cyberware if c not in cyberware]
+
+    if payload.remove_cyberware:
+        cyberware = [c for c in cyberware if c not in payload.remove_cyberware]
+
+    # Loot
+    if payload.add_loot:
+        loot += [l for l in payload.add_loot if l not in loot]
+
+    if payload.remove_loot:
+        loot = [l for l in loot if l not in payload.remove_loot]
+
+    data["weapons"] = weapons
+    data["ammo"] = ammo
+    data["cyberware"] = cyberware
+    data["loot"] = loot
+
+    save_json(path, data)
+
+    return SimpleResponse(success=True, message="Inventory updated")
 
 
-@app.post("/campaign/save", response_model=CampaignUpdateResponse)
-def save_campaign_state(payload: CampaignState) -> CampaignUpdateResponse:
-    try:
-        camp_id = safe_id(payload.campaign_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+# 🌆 Campaign
+@app.post("/campaign/save", response_model=SimpleResponse)
+def save_campaign(payload: CampaignState):
+    path = CAMPAIGN_DIR / f"{safe_id(payload.campaign_id)}.json"
+    save_json(path, payload.model_dump())
+    return SimpleResponse(success=True, message="Saved")
 
-    path = CAMPAIGN_DIR / f"{camp_id}.json"
-    existing = load_json(path)
 
-    updates = payload.model_dump()
-    updates["campaign_id"] = camp_id
-
-    merged = merge_patch(existing, updates)
-    save_json(path, merged)
-
-    return CampaignUpdateResponse(
-        success=True,
-        campaign_id=camp_id,
-        message="Campaign state saved.",
-    )
+@app.get("/campaign/load")
+def load_campaign(campaign_id: str):
+    path = CAMPAIGN_DIR / f"{safe_id(campaign_id)}.json"
+    return load_json(path)
