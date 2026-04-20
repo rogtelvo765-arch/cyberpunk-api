@@ -174,43 +174,50 @@ def inventory(payload: InventoryAction):
 
     data = load_json(path)
     if not data:
-        raise HTTPException(404, "Character not found")
+        raise HTTPException(status_code=404, detail="Character not found")
 
-    weapons = data.get("weapons") or []
-    ammo = data.get("ammo") or {}
-    cyberware = data.get("cyberware") or []
-    loot = data.get("loot") or []
+    weapons = list(data.get("weapons") or [])
+    ammo = dict(data.get("ammo") or {})
+    cyberware = list(data.get("cyberware") or [])
+    loot = list(data.get("loot") or [])
 
     # Weapons
     if payload.add_weapons:
-        weapons += [w for w in payload.add_weapons if w not in weapons]
+        for w in payload.add_weapons:
+            if w not in weapons:
+                weapons.append(w)
 
     if payload.remove_weapons:
         weapons = [w for w in weapons if w not in payload.remove_weapons]
 
     # Ammo
-      if payload.add_ammo:
+    if payload.add_ammo:
         for w, amt in payload.add_ammo.items():
-            ammo[w] = ammo.get(w, 0) + amt
+            ammo[w] = int(ammo.get(w, 0)) + int(amt)
 
     if payload.remove_ammo:
         for w, amt in payload.remove_ammo.items():
-            ammo[w] = max(0, ammo.get(w, 0) - amt)
+            current = int(ammo.get(w, 0))
+            ammo[w] = max(0, current - int(amt))
 
     if payload.set_ammo:
         for w, amt in payload.set_ammo.items():
-            ammo[w] = amt
+            ammo[w] = max(0, int(amt))
 
     # Cyberware
     if payload.add_cyberware:
-        cyberware += [c for c in payload.add_cyberware if c not in cyberware]
+        for c in payload.add_cyberware:
+            if c not in cyberware:
+                cyberware.append(c)
 
     if payload.remove_cyberware:
         cyberware = [c for c in cyberware if c not in payload.remove_cyberware]
 
     # Loot
     if payload.add_loot:
-        loot += [l for l in payload.add_loot if l not in loot]
+        for l in payload.add_loot:
+            if l not in loot:
+                loot.append(l)
 
     if payload.remove_loot:
         loot = [l for l in loot if l not in payload.remove_loot]
@@ -223,7 +230,6 @@ def inventory(payload: InventoryAction):
     save_json(path, data)
 
     return SimpleResponse(success=True, message="Inventory updated")
-
 
 # 🌆 Campaign
 @app.post("/campaign/save", response_model=SimpleResponse)
